@@ -23,6 +23,7 @@ export const statusOf = ({ error: { code } }: DomainError) =>
       "USER_ALREADY_EXISTS",
       "RESERVATION_OVERLAP",
       "VERSION_CONFLICT",
+      "STREAM_GAP_DETECTED",
       "IDEMPOTENCY_HASH_MISMATCH",
       () => 409
     )
@@ -40,8 +41,27 @@ export const badRequest = (reason: string, meta: Record<string, unknown> = {}) =
   }
 });
 
-export const internalError = (error: unknown) =>
-  response(500, {
+export const internalError = (error: unknown) => {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "type" in error &&
+    (error as { type: string }).type === "STREAM_GAP_DETECTED"
+  ) {
+    return response(409, {
+      error: {
+        code: "STREAM_GAP_DETECTED",
+        reason: "Detected non-sequential event versions in stream",
+        meta: {
+          streamType: (error as { streamType?: string }).streamType ?? null,
+          streamId: (error as { streamId?: string }).streamId ?? null,
+          expectedVersion: (error as { expectedVersion?: number }).expectedVersion ?? null,
+          actualVersion: (error as { actualVersion?: number | null }).actualVersion ?? null
+        }
+      }
+    });
+  }
+  return response(500, {
     error: {
       code: "INTERNAL_ERROR",
       reason: "Unhandled server error",
@@ -50,6 +70,7 @@ export const internalError = (error: unknown) =>
       }
     }
   });
+};
 
 export const safe = (promise: Promise<HttpResponse>) => promise.catch(internalError);
 

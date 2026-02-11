@@ -5,6 +5,9 @@ import { config } from "./config.js";
 
 vi.mock("./infra/event-store.js", () => ({
   loadStream: vi.fn(),
+  loadStreamWithGapRetry: vi.fn(),
+  getLatestSnapshot: vi.fn(() => Promise.resolve(null)),
+  putSnapshot: vi.fn(() => Promise.resolve(null)),
   appendEvent: vi.fn(),
   VersionConflictError: class VersionConflictError extends Error {}
 }));
@@ -38,9 +41,9 @@ describe("API integration", () => {
 
   it("rechaza solapamiento al crear reserva", async () => {
     const { createApp } = await import("./app.js");
-    const { loadStream } = await import("./infra/event-store.js");
+    const { loadStreamWithGapRetry } = await import("./infra/event-store.js");
     const { getUserById } = await import("./projections/store.js");
-    vi.mocked(loadStream).mockResolvedValue([
+    vi.mocked(loadStreamWithGapRetry).mockResolvedValue([
       {
         eventId: "e1",
         streamId: "11111111-1111-4111-8111-111111111111",

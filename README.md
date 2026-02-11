@@ -33,6 +33,9 @@ PROJECTION_LAG_TABLE=projection_lag
 
 SQS_ENDPOINT=http://localhost:4566
 SQS_QUEUE_URL=http://localhost:4566/000000000000/reservations-events
+
+SNAPSHOT_EVERY_DEFAULT=500
+SNAPSHOT_BY_STREAM_TYPE={"resource":500,"user":0}
 ```
 
 ## Tablas DynamoDB esperadas
@@ -42,6 +45,28 @@ SQS_QUEUE_URL=http://localhost:4566/000000000000/reservations-events
 - `reservations_projection` (PK: `reservationId`)
 - `idempotency_table` (PK: `idempotencyKey`)
 - `projection_lag` (PK: `projection`)
+
+## Snapshots en S3
+
+- Ruta:
+  - `snapshots/{streamType}/{streamId}/{snapshotVersionPad12}.json`
+- JSON snapshot:
+  - `streamType`, `streamId`, `snapshotVersion`, `lastEventVersion`, `state`, `createdAtUtc`
+- Metadata S3 snapshot:
+  - `snapshotversion`, `lasteventversion`
+- Política:
+  - se crea snapshot sincrónico cada `N` eventos según `SNAPSHOT_BY_STREAM_TYPE`
+  - fallback por stream: `SNAPSHOT_EVERY_DEFAULT`
+- `SNAPSHOT_BY_STREAM_TYPE`:
+  - `0` deshabilita snapshots para ese streamType
+  - ejemplo: `{"resource":500,"user":0}`
+
+## Detección de gaps de versión
+
+- Al leer eventos de un stream, se valida continuidad de versiones (`v, v+1, ...`).
+- Si se detecta hueco, se reintenta lectura una vez.
+- Si persiste, se retorna error serializable:
+  - `error.code = "STREAM_GAP_DETECTED"`
 
 ## Desarrollo
 

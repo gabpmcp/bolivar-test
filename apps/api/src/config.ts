@@ -1,3 +1,15 @@
+import type { StreamType } from "./domain/types.js";
+
+const parseSnapshotByStreamType = (
+  value: string | undefined
+): Partial<Record<StreamType, number>> =>
+  value
+    ? (JSON.parse(value) as Partial<Record<StreamType, number>>)
+    : {
+        resource: 500,
+        user: 0
+      };
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   jwtSecret: process.env.JWT_SECRET ?? "local-dev-secret",
@@ -13,5 +25,7 @@ export const config = {
     process.env.RESERVATIONS_PROJECTION_TABLE ?? "reservations_projection",
   idempotencyTable: process.env.IDEMPOTENCY_TABLE ?? "idempotency_table",
   projectionLagTable: process.env.PROJECTION_LAG_TABLE ?? "projection_lag",
-  pageLimitDefault: Number(process.env.PAGE_LIMIT_DEFAULT ?? 20)
+  pageLimitDefault: Number(process.env.PAGE_LIMIT_DEFAULT ?? 20),
+  snapshotEveryDefault: Number(process.env.SNAPSHOT_EVERY_DEFAULT ?? 500),
+  snapshotByStreamType: parseSnapshotByStreamType(process.env.SNAPSHOT_BY_STREAM_TYPE)
 };

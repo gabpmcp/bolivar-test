@@ -8,9 +8,10 @@ import type {
 } from "../domain/types.js";
 import { decideResource, foldResource, foldUser } from "../domain/index.js";
 import { foldFromEvents } from "../infra/stream-state.js";
-import { loadStream } from "../infra/event-store.js";
+import { getLatestSnapshot, loadStream, loadStreamWithGapRetry, putSnapshot } from "../infra/event-store.js";
 import { appendAndPublish, makeEnvelope, withSingleVersionRetry } from "./command-runner.js";
 import { domainErrorResponse, type HttpResponse } from "./pipeline.js";
+import { config } from "../config.js";
 
 export const buildUserState = (
   events: Awaited<ReturnType<typeof loadStream<UserEvent["type"], UserEvent["payload"]>>>
@@ -24,18 +25,88 @@ export const buildResourceState = (
     foldResource(state, event)
   );
 
+const snapshotThresholdOf = (streamType: "user" | "resource") =>
+  config.snapshotByStreamType[streamType] ?? config.snapshotEveryDefault;
+
+const shouldSnapshot = (streamType: "user" | "resource", nextVersion: number) => {
+  const threshold = snapshotThresholdOf(streamType);
+  return threshold > 0 && nextVersion % threshold === 0;
+};
+
+const maybeWriteSnapshot = <TState>({
+  streamType,
+  streamId,
+  lastEventVersion,
+  state
+}: {
+  streamType: "user" | "resource";
+  streamId: string;
+  lastEventVersion: number;
+  state: TState;
+}) =>
+  shouldSnapshot(streamType, lastEventVersion)
+    ? putSnapshot({
+        streamType,
+        streamId,
+        snapshotVersion: lastEventVersion,
+        lastEventVersion,
+        state,
+        createdAtUtc: new Date().toISOString()
+      }).then(() => undefined)
+    : Promise.resolve();
+
+export const loadStateFromSnapshotAndTail = async <TState, TEvent extends { type: string; payload: unknown }>({
+  streamType,
+  streamId,
+  initialState,
+  fold
+}: {
+  streamType: "user" | "resource";
+  streamId: string;
+  initialState: TState;
+  fold: (state: TState, event: TEvent) => TState;
+}): Promise<{ state: TState; lastEventVersion: number }> => {
+  const snapshot = await getLatestSnapshot<TState>(streamType, streamId);
+  const fromVersion = snapshot ? snapshot.lastEventVersion + 1 : 1;
+  const tail = await loadStreamWithGapRetry<TEvent["type"], TEvent["payload"]>(
+    streamType,
+    streamId,
+    fromVersion
+  );
+  const state = tail.reduce(
+    (acc, envelope) =>
+      fold(
+        acc,
+        {
+          type: envelope.type,
+          payload: envelope.payload
+        } as TEvent
+      ),
+    snapshot ? snapshot.state : initialState
+  );
+  const lastEventVersion =
+    tail.length > 0
+      ? tail[tail.length - 1]!.version
+      : snapshot
+        ? snapshot.lastEventVersion
+        : 0;
+  return { state, lastEventVersion };
+};
+
 export const toCommandResult = <TEvent extends { type: string; payload: Record<string, unknown> }>(
   decision: { kind: "accepted"; event: TEvent } | { kind: "rejected"; error: DomainError },
   accepted: (event: TEvent) => Promise<HttpResponse>
 ) => (decision.kind === "rejected" ? Promise.resolve(domainErrorResponse(decision.error)) : accepted(decision.event));
 
-export const persistUserEvent = ({
+export const appendUserEventAndMaybeSnapshot = ({
   event,
+  stateBefore,
   expectedVersion,
   commandName,
   success
 }: {
   event: UserEvent;
+  stateBefore: UserState | null;
   expectedVersion: number;
   commandName: string;
   success: (event: UserEvent) => HttpResponse;
@@ -50,9 +121,19 @@ export const persistUserEvent = ({
       meta: { command: commandName }
     }),
     expectedVersion
-  ).then(() => success(event));
+  )
+    .then(() =>
+      maybeWriteSnapshot({
+        streamType: "user",
+        streamId: event.payload.userId,
+        lastEventVersion: expectedVersion + 1,
+        state: foldUser(stateBefore, event)
+      })
+    )
+    .then(() => success(event));
 
-export const persistResourceEvent = ({
+export const appendResourceEventAndMaybeSnapshot = ({
+  stateBefore,
   resourceId,
   expectedVersion,
   event,
@@ -60,6 +141,7 @@ export const persistResourceEvent = ({
   actorUserId,
   success
 }: {
+  stateBefore: ResourceState | null;
   resourceId: string;
   expectedVersion: number;
   event: ResourceEvent;
@@ -77,9 +159,18 @@ export const persistResourceEvent = ({
       meta: { command: commandName, actorUserId }
     }),
     expectedVersion
-  ).then(() => success(event));
+  )
+    .then(() =>
+      maybeWriteSnapshot({
+        streamType: "resource",
+        streamId: resourceId,
+        lastEventVersion: expectedVersion + 1,
+        state: foldResource(stateBefore, event)
+      })
+    )
+    .then(() => success(event));
 
-export const executeResourceMutation = ({
+export const executeResourceTransition = ({
   resourceId,
   commandOf,
   commandName,
@@ -93,12 +184,17 @@ export const executeResourceMutation = ({
   onAccepted: (event: ResourceEvent) => HttpResponse;
 }) => {
   const runResourceAttempt = () =>
-    loadStream<ResourceEvent["type"], ResourceEvent["payload"]>("resource", resourceId).then((events) => {
-      const state = buildResourceState(events);
+    loadStateFromSnapshotAndTail<ResourceState | null, ResourceEvent>({
+      streamType: "resource",
+      streamId: resourceId,
+      initialState: null,
+      fold: (state, event) => foldResource(state, event)
+    }).then(({ state, lastEventVersion }) => {
       return toCommandResult(decideResource(state, commandOf(state)), (event) =>
-        persistResourceEvent({
+        appendResourceEventAndMaybeSnapshot({
+          stateBefore: state,
           resourceId,
-          expectedVersion: events.length,
+          expectedVersion: lastEventVersion,
           event,
           commandName,
           actorUserId,
