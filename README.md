@@ -91,3 +91,130 @@ Errores de negocio siempre en:
   }
 }
 ```
+
+## Smoke test manual (curl)
+
+### 1) Bootstrap admin y token
+
+```bash
+curl -s -X POST http://localhost:3000/commands/user \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: bootstrap-admin-1" \
+  -H "x-admin-bootstrap-key: bootstrap-local-key" \
+  -d '{
+    "command": {
+      "type": "BootstrapAdmin",
+      "payload": {
+        "email": "admin@test.com",
+        "password": "Password123"
+      }
+    }
+  }'
+```
+
+Guardar token en variable:
+
+```bash
+ADMIN_TOKEN=$(curl -s -X POST http://localhost:3000/commands/user \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: bootstrap-admin-1" \
+  -H "x-admin-bootstrap-key: bootstrap-local-key" \
+  -d '{"command":{"type":"BootstrapAdmin","payload":{"email":"admin@test.com","password":"Password123"}}}' \
+  | jq -r '.token')
+```
+
+Si el admin ya existe, usa login:
+
+```bash
+ADMIN_TOKEN=$(curl -s -X POST http://localhost:3000/commands/user \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: login-admin-1" \
+  -d '{"command":{"type":"LoginUser","payload":{"email":"admin@test.com","password":"Password123"}}}' \
+  | jq -r '.token')
+```
+
+### 2) Crear recurso
+
+```bash
+RESOURCE_ID=$(curl -s -X POST http://localhost:3000/commands/resource \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Idempotency-Key: create-resource-1" \
+  -d '{
+    "command": {
+      "type": "CreateResource",
+      "payload": {
+        "name": "SalaA",
+        "details": "Piso 1"
+      }
+    }
+  }' | jq -r '.resourceId')
+```
+
+### 3) Crear reserva válida
+
+```bash
+RESERVATION_ID=$(curl -s -X POST http://localhost:3000/commands/resource \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Idempotency-Key: create-res-1" \
+  -d "{
+    \"command\": {
+      \"type\": \"CreateReservationInResource\",
+      \"payload\": {
+        \"resourceId\": \"$RESOURCE_ID\",
+        \"fromUtc\": \"2026-12-01T10:00:00.000Z\",
+        \"toUtc\": \"2026-12-01T11:00:00.000Z\"
+      }
+    }
+  }" | jq -r '.reservationId')
+```
+
+### 4) Probar solapamiento (espera HTTP 409)
+
+```bash
+curl -i -X POST http://localhost:3000/commands/resource \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Idempotency-Key: create-res-overlap-1" \
+  -d "{
+    \"command\": {
+      \"type\": \"CreateReservationInResource\",
+      \"payload\": {
+        \"resourceId\": \"$RESOURCE_ID\",
+        \"fromUtc\": \"2026-12-01T10:30:00.000Z\",
+        \"toUtc\": \"2026-12-01T11:30:00.000Z\"
+      }
+    }
+  }"
+```
+
+### 5) Idempotencia (mismo key y mismo body)
+
+Repite exactamente el comando exitoso de creación de reserva con el mismo `Idempotency-Key` (`create-res-1`) y no se duplica el efecto.
+
+### 6) Consultas con projection lag
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "http://localhost:3000/resources?limit=20"
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "http://localhost:3000/reservations/active?scope=global&limit=20"
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "http://localhost:3000/reservations/history?scope=global&limit=20"
+```
+
+### 7) Cancelar reserva
+
+```bash
+curl -s -X POST http://localhost:3000/commands/resource \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Idempotency-Key: cancel-res-1" \
+  -d "{
+    \"command\": {
+      \"type\": \"CancelReservationInResource\",
+      \"payload\": {
+        \"resourceId\": \"$RESOURCE_ID\",
+        \"reservationId\": \"$RESERVATION_ID\"
+      }
+    }
+  }"
+```
