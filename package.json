@@ -1,0 +1,16 @@
+{
+  "name": "bolivar-test",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run -ws build",
+    "dev:api": "npm --workspace @app/api run dev",
+    "dev:web": "npm --workspace @app/web run dev",
+    "dev:worker": "npm --workspace @app/api run worker:dev",
+    "test": "npm run -ws test"
+  }
+}
