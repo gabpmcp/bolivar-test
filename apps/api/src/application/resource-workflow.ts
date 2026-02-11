@@ -98,7 +98,7 @@ export const toCommandResult = <TEvent extends { type: string; payload: Record<s
   accepted: (event: TEvent) => Promise<HttpResponse>
 ) => (decision.kind === "rejected" ? Promise.resolve(domainErrorResponse(decision.error)) : accepted(decision.event));
 
-export const appendUserEventAndMaybeSnapshot = ({
+export const applyUserEvent = ({
   event,
   stateBefore,
   expectedVersion,
@@ -132,7 +132,7 @@ export const appendUserEventAndMaybeSnapshot = ({
     )
     .then(() => success(event));
 
-export const appendResourceEventAndMaybeSnapshot = ({
+export const applyResourceEvent = ({
   stateBefore,
   resourceId,
   expectedVersion,
@@ -170,7 +170,7 @@ export const appendResourceEventAndMaybeSnapshot = ({
     )
     .then(() => success(event));
 
-export const executeResourceTransition = ({
+export const applyResourceCommand = ({
   resourceId,
   commandOf,
   commandName,
@@ -191,7 +191,7 @@ export const executeResourceTransition = ({
       fold: (state, event) => foldResource(state, event)
     }).then(({ state, lastEventVersion }) => {
       return toCommandResult(decideResource(state, commandOf(state)), (event) =>
-        appendResourceEventAndMaybeSnapshot({
+        applyResourceEvent({
           stateBefore: state,
           resourceId,
           expectedVersion: lastEventVersion,

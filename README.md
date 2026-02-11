@@ -77,6 +77,36 @@ npm run dev:worker
 npm run dev:web
 ```
 
+## Docker local (API + Worker + LocalStack)
+
+Levanta backend listo para pruebas en Postman con S3/SQS/DynamoDB locales:
+
+```bash
+docker compose up --build
+```
+
+Servicios:
+
+- API: `http://localhost:3000`
+- LocalStack: `http://localhost:4566`
+
+El `docker-compose` inicializa automáticamente:
+
+- bucket S3 `reservations-events`
+- cola SQS `reservations-events`
+- tablas DynamoDB:
+  - `users_projection`
+  - `resources_projection`
+  - `reservations_projection`
+  - `idempotency_table`
+  - `projection_lag`
+
+Para reiniciar desde cero (incluyendo datos de LocalStack):
+
+```bash
+docker compose down -v
+```
+
 ## Pruebas y build
 
 ```bash

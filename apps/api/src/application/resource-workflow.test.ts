@@ -29,7 +29,7 @@ vi.mock("../infra/event-store.js", async (importOriginal) => {
 
 import {
   loadStateFromSnapshotAndTail,
-  appendResourceEventAndMaybeSnapshot
+  applyResourceEvent
 } from "./resource-workflow.js";
 
 describe("resource-workflow snapshots", () => {
@@ -97,7 +97,7 @@ describe("resource-workflow snapshots", () => {
     appendAndPublishMock.mockImplementation((envelope: unknown) => Promise.resolve(envelope));
     putSnapshotMock.mockResolvedValue({});
 
-    await appendResourceEventAndMaybeSnapshot({
+    await applyResourceEvent({
       stateBefore: {
         resourceId: "r-1",
         name: "SalaA",
