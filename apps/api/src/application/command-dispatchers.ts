@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import { config } from "../config.js";
 import type { HttpResponse } from "./pipeline.js";
 import { domainErrorResponse, nowUtc, response } from "./pipeline.js";
-import { resolveOutcome } from "./outcome-resolver.js";
 import {
   applyResourceEvent,
   applyResourceCommand,
@@ -43,6 +42,16 @@ export type ResourceCommandInput =
 type AuthContext = { sub: string; role: "admin" | "user" };
 const isHttpResponse = (value: unknown): value is HttpResponse =>
   typeof value === "object" && value !== null && "statusCode" in value && "body" in value;
+
+const resolveOutcome = <T extends { kind: string }, K extends T["kind"], R>(
+  value: T,
+  successKind: K,
+  onSuccess: (matched: Extract<T, { kind: K }>) => R,
+  onFailure: (other: Exclude<T, { kind: K }>) => R
+): R =>
+  value.kind === successKind
+    ? onSuccess(value as Extract<T, { kind: K }>)
+    : onFailure(value as Exclude<T, { kind: K }>);
 const invalidCredentialsResponse = () =>
   response(401, { error: { code: "INVALID_CREDENTIALS", reason: "Credentials are invalid", meta: {} } });
 const reservationCreatedResponse = (event: ResourceEvent) =>

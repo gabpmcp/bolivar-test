@@ -1,12 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
+import type { ErrorShape } from "@app/shared";
 
-export type ApiError = {
-  error: {
-    code: string;
-    reason: string;
-    meta: Record<string, unknown>;
-  };
-};
+export type ApiError = ErrorShape;
 
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
 

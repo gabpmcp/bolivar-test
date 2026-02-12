@@ -1,12 +1,5 @@
-export type Role = "admin" | "user";
-
-export type DomainError = {
-  error: {
-    code: string;
-    reason: string;
-    meta: Record<string, unknown>;
-  };
-};
+export type { Role } from "@app/shared";
+export type { ErrorShape as DomainError } from "@app/shared";
 
 export type Decision<T> =
   | { kind: "accepted"; event: T }

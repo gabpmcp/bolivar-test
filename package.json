@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "build": "npm run -ws build",
+    "build:solution": "tsc -b tsconfig.build.json",
     "dev:api": "npm --workspace @app/api run dev",
     "dev:web": "npm --workspace @app/web run dev",
     "dev:worker": "npm --workspace @app/api run worker:dev",

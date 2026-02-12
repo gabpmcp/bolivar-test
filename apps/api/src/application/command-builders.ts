@@ -28,7 +28,7 @@ export const buildBootstrapAdminCommand = ({
     : emailExists
       ? {
           kind: "error",
-          error: domainError("EMAIL_ALREADY_EXISTS", "Email is already registered", { email })
+          error: domainError("USER_ALREADY_EXISTS", "Email is already registered", { email })
         }
       : {
           kind: "ok",
@@ -52,7 +52,7 @@ export const buildRegisterUserCommand = ({
   emailExists
     ? {
         kind: "error",
-        error: domainError("EMAIL_ALREADY_EXISTS", "Email is already registered", { email })
+        error: domainError("USER_ALREADY_EXISTS", "Email is already registered", { email })
       }
     : {
         kind: "ok",

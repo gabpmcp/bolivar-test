@@ -1,14 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { request, type ApiError } from "./api.js";
+import type { JwtClaims, Role } from "@app/shared";
 
-type Role = "admin" | "user";
-
-type Claims = {
-  sub: string;
-  role: Role;
-  email: string;
-  exp: number;
-};
+type Claims = JwtClaims & { exp: number };
 
 type Resource = {
   resourceId: string;

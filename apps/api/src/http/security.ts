@@ -1,13 +1,7 @@
 import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 import { config } from "../config.js";
-import type { Role } from "../domain/types.js";
-
-type JwtClaims = {
-  sub: string;
-  role: Role;
-  email: string;
-};
+import type { JwtClaims, Role } from "@app/shared";
 
 export const signToken = (claims: JwtClaims) =>
   jwt.sign(claims, config.jwtSecret, {
