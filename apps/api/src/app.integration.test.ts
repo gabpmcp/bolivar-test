@@ -12,12 +12,6 @@ vi.mock("./infra/event-store.js", () => ({
   VersionConflictError: class VersionConflictError extends Error {}
 }));
 
-vi.mock("./application/command-runner.js", () => ({
-  makeEnvelope: vi.fn((value) => value),
-  appendAndPublish: vi.fn((envelope) => Promise.resolve(envelope)),
-  withSingleVersionRetry: vi.fn((action) => action())
-}));
-
 vi.mock("./infra/idempotency.js", () => ({
   loadIdempotency: vi.fn(() => Promise.resolve(null)),
   saveIdempotency: vi.fn(() => Promise.resolve(null)),

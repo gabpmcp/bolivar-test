@@ -1,26 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { config } from "../config.js";
 
-const { appendAndPublishMock, getLatestSnapshotMock, loadStreamWithGapRetryMock, putSnapshotMock } =
+const { appendEventMock, getLatestSnapshotMock, loadStreamWithGapRetryMock, putSnapshotMock } =
   vi.hoisted(() => ({
-    appendAndPublishMock: vi.fn(),
+    appendEventMock: vi.fn(),
     getLatestSnapshotMock: vi.fn(),
     loadStreamWithGapRetryMock: vi.fn(),
     putSnapshotMock: vi.fn()
   }));
 
-vi.mock("./command-runner.js", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./command-runner.js")>();
-  return {
-    ...original,
-    appendAndPublish: appendAndPublishMock
-  };
-});
-
 vi.mock("../infra/event-store.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../infra/event-store.js")>();
   return {
     ...original,
+    appendEvent: appendEventMock,
     getLatestSnapshot: getLatestSnapshotMock,
     loadStreamWithGapRetry: loadStreamWithGapRetryMock,
     putSnapshot: putSnapshotMock
@@ -36,7 +29,7 @@ describe("resource-workflow snapshots", () => {
   const originalSnapshotPolicy = { ...config.snapshotByStreamType };
 
   beforeEach(() => {
-    appendAndPublishMock.mockReset();
+    appendEventMock.mockReset();
     getLatestSnapshotMock.mockReset();
     loadStreamWithGapRetryMock.mockReset();
     putSnapshotMock.mockReset();
@@ -94,7 +87,7 @@ describe("resource-workflow snapshots", () => {
   });
 
   it("escribe snapshot sincrónico al alcanzar umbral", async () => {
-    appendAndPublishMock.mockImplementation((envelope: unknown) => Promise.resolve(envelope));
+    appendEventMock.mockResolvedValue(undefined as never);
     putSnapshotMock.mockResolvedValue({});
 
     await applyResourceEvent({

@@ -1,5 +1,7 @@
-export type { Role } from "@app/shared";
-export type { ErrorShape as DomainError } from "@app/shared";
+import type { ErrorShape, Role } from "@app/shared";
+
+export type { Role };
+export type DomainError = ErrorShape;
 
 export type Decision<T> =
   | { kind: "accepted"; event: T }
@@ -7,7 +9,7 @@ export type Decision<T> =
 
 export type StreamType = "user" | "resource";
 
-export type EventEnvelope<TType extends string, TPayload> = {
+export type RecordedEvent<TType extends string, TPayload> = {
   eventId: string;
   streamId: string;
   streamType: StreamType;
@@ -17,6 +19,14 @@ export type EventEnvelope<TType extends string, TPayload> = {
   payload: TPayload;
   meta: Record<string, unknown>;
 };
+
+export const domainError = (
+  code: string,
+  reason: string,
+  meta: Record<string, unknown> = {}
+): DomainError => ({
+  error: { code, reason, meta }
+});
 
 export type UserState = {
   userId: string;

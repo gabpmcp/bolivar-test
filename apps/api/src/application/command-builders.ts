@@ -1,6 +1,6 @@
 import { v7 as uuidv7 } from "uuid";
 import bcrypt from "bcryptjs";
-import { domainError } from "../domain/error.js";
+import { domainError } from "../domain/types.js";
 import type { ResourceCommand, UserCommand, UserState } from "../domain/types.js";
 
 export type BuildResult<T> =

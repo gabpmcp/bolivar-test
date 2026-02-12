@@ -1,121 +1,119 @@
-import { PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { match } from "ts-pattern";
-import { ddb } from "../infra/aws.js";
-import { config } from "../config.js";
-import { upsertProjectionLag } from "./store.js";
-import type { EventEnvelope } from "../domain/types.js";
+import type { RecordedEvent } from "../domain/types.js";
 
-export const projectEvent = (
-  envelope: EventEnvelope<string, Record<string, unknown>>
-) =>
-  match(envelope)
-    .with({ type: "AdminBootstrapped" }, ({ payload, occurredAtUtc }) =>
-      ddb.send(
-        new PutCommand({
-          TableName: config.usersProjectionTable,
-          Item: {
-            userId: payload.userId,
-            email: payload.email,
-            passwordHash: payload.passwordHash,
-            role: "admin",
-            createdAtUtc: occurredAtUtc
-          }
-        })
-      )
-    )
-    .with({ type: "UserRegistered" }, ({ payload, occurredAtUtc }) =>
-      ddb.send(
-        new PutCommand({
-          TableName: config.usersProjectionTable,
-          Item: {
-            userId: payload.userId,
-            email: payload.email,
-            passwordHash: payload.passwordHash,
-            role: payload.role,
-            createdAtUtc: occurredAtUtc
-          }
-        })
-      )
-    )
-    .with({ type: "UserLoggedIn" }, ({ payload, occurredAtUtc }) =>
-      ddb.send(
-        new UpdateCommand({
-          TableName: config.usersProjectionTable,
-          Key: { userId: payload.userId },
-          UpdateExpression: "SET lastLoginAtUtc = :at",
-          ExpressionAttributeValues: {
-            ":at": occurredAtUtc
-          }
-        })
-      )
-    )
-    .with({ type: "ResourceCreated" }, ({ payload, occurredAtUtc }) =>
-      ddb.send(
-        new PutCommand({
-          TableName: config.resourcesProjectionTable,
-          Item: {
-            resourceId: payload.resourceId,
-            name: payload.name,
-            details: payload.details,
-            status: "active",
-            createdAtUtc: occurredAtUtc,
-            updatedAtUtc: occurredAtUtc
-          }
-        })
-      )
-    )
-    .with({ type: "ResourceMetadataUpdated" }, ({ payload, occurredAtUtc }) =>
-      ddb.send(
-        new UpdateCommand({
-          TableName: config.resourcesProjectionTable,
-          Key: { resourceId: payload.resourceId },
-          UpdateExpression: "SET details = :details, updatedAtUtc = :updatedAt",
-          ExpressionAttributeValues: {
-            ":details": payload.details,
-            ":updatedAt": occurredAtUtc
-          }
-        })
-      )
-    )
-    .with({ type: "ReservationAddedToResource" }, ({ payload }) =>
-      ddb.send(
-        new PutCommand({
-          TableName: config.reservationsProjectionTable,
-          Item: {
-            reservationId: payload.reservationId,
-            resourceId: payload.resourceId,
-            userId: payload.userId,
-            fromUtc: payload.fromUtc,
-            toUtc: payload.toUtc,
-            status: "active",
-            createdAtUtc: payload.createdAtUtc,
-            cancelledAtUtc: null
-          }
-        })
-      )
-    )
-    .with({ type: "ResourceReservationCancelled" }, ({ payload }) =>
-      ddb.send(
-        new UpdateCommand({
-          TableName: config.reservationsProjectionTable,
-          Key: { reservationId: payload.reservationId },
-          UpdateExpression: "SET #status = :cancelled, cancelledAtUtc = :cancelledAt",
-          ExpressionAttributeNames: { "#status": "status" },
-          ExpressionAttributeValues: {
-            ":cancelled": "cancelled",
-            ":cancelledAt": payload.cancelledAtUtc
-          }
-        })
-      )
-    )
-    .otherwise(() => Promise.resolve());
+export type ProjectionOp =
+  | {
+      kind: "putUser";
+      item: {
+        userId: string;
+        email: string;
+        passwordHash: string;
+        role: "admin" | "user";
+        createdAtUtc: string;
+      };
+    }
+  | { kind: "setUserLastLoginAtUtc"; userId: string; lastLoginAtUtc: string }
+  | {
+      kind: "putResource";
+      item: {
+        resourceId: string;
+        name: string;
+        details: string;
+        status: "active";
+        createdAtUtc: string;
+        updatedAtUtc: string;
+      };
+    }
+  | { kind: "updateResourceDetails"; resourceId: string; details: string; updatedAtUtc: string }
+  | {
+      kind: "putReservation";
+      item: {
+        reservationId: string;
+        resourceId: string;
+        userId: string;
+        fromUtc: string;
+        toUtc: string;
+        status: "active";
+        createdAtUtc: string;
+        cancelledAtUtc: null;
+      };
+    }
+  | { kind: "cancelReservation"; reservationId: string; cancelledAtUtc: string };
 
-export const projectAndTrackLag = (
-  envelope: EventEnvelope<string, Record<string, unknown>>
-) =>
-  projectEvent(envelope).then(() =>
-    upsertProjectionLag({
-      lastProjectedAtUtc: envelope.occurredAtUtc,
-      eventsBehind: 0
-    })
-  );
+export const project = (recordedEvent: RecordedEvent<string, Record<string, unknown>>): ProjectionOp[] =>
+  match(recordedEvent)
+    .with({ type: "AdminBootstrapped" }, ({ payload, occurredAtUtc }) => [
+      {
+        kind: "putUser",
+        item: {
+          userId: payload.userId as string,
+          email: payload.email as string,
+          passwordHash: payload.passwordHash as string,
+          role: "admin",
+          createdAtUtc: occurredAtUtc
+        }
+      } satisfies ProjectionOp
+    ])
+    .with({ type: "UserRegistered" }, ({ payload, occurredAtUtc }) => [
+      {
+        kind: "putUser",
+        item: {
+          userId: payload.userId as string,
+          email: payload.email as string,
+          passwordHash: payload.passwordHash as string,
+          role: payload.role as "admin" | "user",
+          createdAtUtc: occurredAtUtc
+        }
+      } satisfies ProjectionOp
+    ])
+    .with({ type: "UserLoggedIn" }, ({ payload, occurredAtUtc }) => [
+      {
+        kind: "setUserLastLoginAtUtc",
+        userId: payload.userId as string,
+        lastLoginAtUtc: occurredAtUtc
+      } satisfies ProjectionOp
+    ])
+    .with({ type: "ResourceCreated" }, ({ payload, occurredAtUtc }) => [
+      {
+        kind: "putResource",
+        item: {
+          resourceId: payload.resourceId as string,
+          name: payload.name as string,
+          details: payload.details as string,
+          status: "active",
+          createdAtUtc: occurredAtUtc,
+          updatedAtUtc: occurredAtUtc
+        }
+      } satisfies ProjectionOp
+    ])
+    .with({ type: "ResourceMetadataUpdated" }, ({ payload, occurredAtUtc }) => [
+      {
+        kind: "updateResourceDetails",
+        resourceId: payload.resourceId as string,
+        details: payload.details as string,
+        updatedAtUtc: occurredAtUtc
+      } satisfies ProjectionOp
+    ])
+    .with({ type: "ReservationAddedToResource" }, ({ payload }) => [
+      {
+        kind: "putReservation",
+        item: {
+          reservationId: payload.reservationId as string,
+          resourceId: payload.resourceId as string,
+          userId: payload.userId as string,
+          fromUtc: payload.fromUtc as string,
+          toUtc: payload.toUtc as string,
+          status: "active",
+          createdAtUtc: payload.createdAtUtc as string,
+          cancelledAtUtc: null
+        }
+      } satisfies ProjectionOp
+    ])
+    .with({ type: "ResourceReservationCancelled" }, ({ payload }) => [
+      {
+        kind: "cancelReservation",
+        reservationId: payload.reservationId as string,
+        cancelledAtUtc: payload.cancelledAtUtc as string
+      } satisfies ProjectionOp
+    ])
+    .otherwise(() => []);

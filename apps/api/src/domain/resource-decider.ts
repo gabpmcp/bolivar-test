@@ -1,4 +1,4 @@
-import { domainError } from "./error.js";
+import { domainError } from "./types.js";
 import type {
   Decision,
   Reservation,

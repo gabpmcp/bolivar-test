@@ -3,25 +3,94 @@ import type {
   ResourceCommand,
   ResourceEvent,
   ResourceState,
+  RecordedEvent,
   UserEvent,
   UserState
 } from "../domain/types.js";
-import { decideResource, foldResource, foldUser } from "../domain/index.js";
-import { foldFromEvents } from "../infra/stream-state.js";
+import { foldUser } from "../domain/user-decider.js";
+import { decideResource, foldResource } from "../domain/resource-decider.js";
 import { getLatestSnapshot, loadStream, loadStreamWithGapRetry, putSnapshot } from "../infra/event-store.js";
-import { appendAndPublish, makeEnvelope, withSingleVersionRetry } from "./command-runner.js";
 import { domainErrorResponse, type HttpResponse } from "./pipeline.js";
 import { config } from "../config.js";
+import { v7 as uuidv7 } from "uuid";
+import { SendMessageCommand } from "@aws-sdk/client-sqs";
+import { sqs } from "../infra/aws.js";
+import { appendEvent, VersionConflictError } from "../infra/event-store.js";
+
+const foldFromEnvelopes = <TState, TEvent extends { type: string; payload: unknown }>(
+  events: Awaited<ReturnType<typeof loadStream<TEvent["type"], TEvent["payload"]>>>,
+  initial: TState,
+  fold: (state: TState, event: TEvent) => TState
+) =>
+  events.reduce(
+    (state, recordedEvent) =>
+      fold(
+        state,
+        {
+          type: recordedEvent.type,
+          payload: recordedEvent.payload
+        } as TEvent
+      ),
+    initial
+  );
+
+const enqueueRecordedEvent = (recordedEvent: unknown) =>
+  config.sqsQueueUrl
+    ? sqs.send(
+        new SendMessageCommand({
+          QueueUrl: config.sqsQueueUrl,
+          MessageBody: JSON.stringify(recordedEvent)
+        })
+      )
+    : Promise.resolve();
+
+const recordEvent = <TType extends string, TPayload>({
+  streamId,
+  streamType,
+  version,
+  type,
+  payload,
+  meta
+}: {
+  streamId: string;
+  streamType: "user" | "resource";
+  version: number;
+  type: TType;
+  payload: TPayload;
+  meta: Record<string, unknown>;
+}): RecordedEvent<TType, TPayload> => ({
+  eventId: uuidv7(),
+  streamId,
+  streamType,
+  version,
+  type,
+  payload,
+  occurredAtUtc: new Date().toISOString(),
+  meta
+});
+
+const appendAndPublishRecordedEvent = <TType extends string, TPayload>(
+  recordedEvent: RecordedEvent<TType, TPayload>,
+  expectedVersion: number
+) =>
+  appendEvent(recordedEvent, expectedVersion)
+    .then(() => enqueueRecordedEvent(recordedEvent).then(() => undefined))
+    .then(() => recordedEvent);
+
+const withSingleVersionRetry = <T>(action: () => Promise<T>, retry: () => Promise<T>) =>
+  action().catch((error) =>
+    error instanceof VersionConflictError ? retry() : Promise.reject(error)
+  );
 
 export const buildUserState = (
   events: Awaited<ReturnType<typeof loadStream<UserEvent["type"], UserEvent["payload"]>>>
 ) =>
-  foldFromEvents<UserState | null, UserEvent>(events, null, (state, event) => foldUser(state, event));
+  foldFromEnvelopes<UserState | null, UserEvent>(events, null, (state, event) => foldUser(state, event));
 
 export const buildResourceState = (
   events: Awaited<ReturnType<typeof loadStream<ResourceEvent["type"], ResourceEvent["payload"]>>>
 ) =>
-  foldFromEvents<ResourceState | null, ResourceEvent>(events, null, (state, event) =>
+  foldFromEnvelopes<ResourceState | null, ResourceEvent>(events, null, (state, event) =>
     foldResource(state, event)
   );
 
@@ -74,12 +143,12 @@ export const loadStateFromSnapshotAndTail = async <TState, TEvent extends { type
     fromVersion
   );
   const state = tail.reduce(
-    (acc, envelope) =>
+    (acc, recordedEvent) =>
       fold(
         acc,
         {
-          type: envelope.type,
-          payload: envelope.payload
+          type: recordedEvent.type,
+          payload: recordedEvent.payload
         } as TEvent
       ),
     snapshot ? snapshot.state : initialState
@@ -111,8 +180,8 @@ export const applyUserEvent = ({
   commandName: string;
   success: (event: UserEvent) => HttpResponse;
 }) =>
-  appendAndPublish(
-    makeEnvelope({
+  appendAndPublishRecordedEvent(
+    recordEvent({
       streamId: event.payload.userId,
       streamType: "user",
       version: expectedVersion + 1,
@@ -149,8 +218,8 @@ export const applyResourceEvent = ({
   actorUserId: string;
   success: (event: ResourceEvent) => HttpResponse;
 }) =>
-  appendAndPublish(
-    makeEnvelope({
+  appendAndPublishRecordedEvent(
+    recordEvent({
       streamId: resourceId,
       streamType: "resource",
       version: expectedVersion + 1,

@@ -5,7 +5,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { s3 } from "./aws.js";
 import { config } from "../config.js";
-import type { EventEnvelope, StreamType } from "../domain/types.js";
+import type { RecordedEvent, StreamType } from "../domain/types.js";
 
 const keyOf = (streamType: StreamType, streamId: string, version: number) =>
   `${streamType}/${streamId}/${String(version).padStart(12, "0")}.json`;
@@ -51,7 +51,7 @@ export class StreamGapDetectedError extends Error {
   }
 }
 
-export type SnapshotEnvelope<TState> = {
+export type SnapshotRecord<TState> = {
   streamType: StreamType;
   streamId: string;
   snapshotVersion: number;
@@ -115,7 +115,7 @@ export const loadStreamFromVersion = async <TType extends string, TPayload>(
   streamType: StreamType,
   streamId: string,
   fromVersionInclusive: number
-): Promise<EventEnvelope<TType, TPayload>[]> => {
+): Promise<RecordedEvent<TType, TPayload>[]> => {
   const keys = (await listKeysByPrefix(`${streamType}/${streamId}/`))
     .map((key) => ({ key, version: parseVersion(key) }))
     .filter(({ version }) => Number.isFinite(version) && version >= fromVersionInclusive)
@@ -123,7 +123,7 @@ export const loadStreamFromVersion = async <TType extends string, TPayload>(
     .map(({ key }) => key);
 
   return Promise.all(
-    keys.map((key) => loadJsonObject<EventEnvelope<TType, TPayload>>(key))
+    keys.map((key) => loadJsonObject<RecordedEvent<TType, TPayload>>(key))
   );
 };
 
@@ -131,7 +131,7 @@ export const loadStreamWithGapRetry = async <TType extends string, TPayload>(
   streamType: StreamType,
   streamId: string,
   fromVersionInclusive: number
-): Promise<EventEnvelope<TType, TPayload>[]> => {
+): Promise<RecordedEvent<TType, TPayload>[]> => {
   const loadAndValidate = async () => {
     const events = await loadStreamFromVersion<TType, TPayload>(
       streamType,
@@ -162,10 +162,10 @@ export const loadStreamWithGapRetry = async <TType extends string, TPayload>(
 export const loadStream = async <TType extends string, TPayload>(
   streamType: StreamType,
   streamId: string
-): Promise<EventEnvelope<TType, TPayload>[]> =>
+): Promise<RecordedEvent<TType, TPayload>[]> =>
   loadStreamWithGapRetry<TType, TPayload>(streamType, streamId, 1);
 
-export const putSnapshot = async <TState>(snapshot: SnapshotEnvelope<TState>) =>
+export const putSnapshot = async <TState>(snapshot: SnapshotRecord<TState>) =>
   s3
     .send(
       new PutObjectCommand({
@@ -190,25 +190,25 @@ export const putSnapshot = async <TState>(snapshot: SnapshotEnvelope<TState>) =>
 export const getLatestSnapshot = async <TState>(
   streamType: StreamType,
   streamId: string
-): Promise<SnapshotEnvelope<TState> | null> => {
+): Promise<SnapshotRecord<TState> | null> => {
   const latest = (await listKeysByPrefix(`snapshots/${streamType}/${streamId}/`))
     .map((key) => ({ key, version: parseVersion(key) }))
     .filter(({ version }) => Number.isFinite(version))
     .sort((a, b) => b.version - a.version)[0];
-  return latest ? loadJsonObject<SnapshotEnvelope<TState>>(latest.key) : null;
+  return latest ? loadJsonObject<SnapshotRecord<TState>>(latest.key) : null;
 };
 
 export const appendEvent = async <TType extends string, TPayload>(
-  envelope: EventEnvelope<TType, TPayload>,
+  recordedEvent: RecordedEvent<TType, TPayload>,
   expectedVersion: number
 ) =>
-  expectedVersion + 1 === envelope.version
+  expectedVersion + 1 === recordedEvent.version
     ? s3
         .send(
           new PutObjectCommand({
             Bucket: config.s3BucketEvents,
-            Key: keyOf(envelope.streamType, envelope.streamId, envelope.version),
-            Body: JSON.stringify(envelope),
+            Key: keyOf(recordedEvent.streamType, recordedEvent.streamId, recordedEvent.version),
+            Body: JSON.stringify(recordedEvent),
             ContentType: "application/json",
             IfNoneMatch: "*"
           })
@@ -218,4 +218,4 @@ export const appendEvent = async <TType extends string, TPayload>(
             ? Promise.reject(new VersionConflictError("Version conflict while appending event"))
             : Promise.reject(error)
         )
-    : Promise.reject(new VersionConflictError("Expected version does not match envelope version"));
+    : Promise.reject(new VersionConflictError("Expected version does not match recorded event version"));

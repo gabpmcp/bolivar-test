@@ -1,5 +1,5 @@
 import { match, P } from "ts-pattern";
-import { domainError } from "./error.js";
+import { domainError } from "./types.js";
 import type { Decision, UserCommand, UserEvent, UserState } from "./types.js";
 
 export const foldUser = (

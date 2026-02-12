@@ -1,3 +1,3 @@
-import { workerLoop } from "./application/worker-pipeline.js";
+import { workerLoop } from "./application/projection-worker.js";
 
 workerLoop();

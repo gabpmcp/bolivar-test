@@ -1,4 +1,5 @@
-import { decideResource, decideUser, foldUser } from "../domain/index.js";
+import { decideUser, foldUser } from "../domain/user-decider.js";
+import { decideResource } from "../domain/resource-decider.js";
 import { getUserByEmail, getUserById, resourceNameTaken } from "../projections/store.js";
 import { match } from "ts-pattern";
 import { randomUUID } from "node:crypto";

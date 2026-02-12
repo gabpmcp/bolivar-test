@@ -1,6 +1,8 @@
-import { GetCommand, PutCommand, ScanCommand } from "@aws-sdk/lib-dynamodb";
+import { GetCommand, PutCommand, ScanCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { ddb } from "../infra/aws.js";
 import { config } from "../config.js";
+import { match } from "ts-pattern";
+import type { ProjectionOp } from "./projector.js";
 
 const decodeCursor = (cursor: string | undefined) =>
   cursor ? (JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>) : undefined;
@@ -171,4 +173,77 @@ export const upsertProjectionLag = (lag: { lastProjectedAtUtc: string; eventsBeh
         ...lag
       }
     })
+  );
+
+export const applyProjectionOps = (ops: ProjectionOp[]) =>
+  ops.reduce(
+    (promise, op) =>
+      promise.then(() =>
+        match(op)
+          .with({ kind: "putUser" }, ({ item }) =>
+            ddb.send(
+              new PutCommand({
+                TableName: config.usersProjectionTable,
+                Item: item
+              })
+            ).then(() => undefined)
+          )
+          .with({ kind: "setUserLastLoginAtUtc" }, ({ userId, lastLoginAtUtc }) =>
+            ddb.send(
+              new UpdateCommand({
+                TableName: config.usersProjectionTable,
+                Key: { userId },
+                UpdateExpression: "SET lastLoginAtUtc = :at",
+                ExpressionAttributeValues: {
+                  ":at": lastLoginAtUtc
+                }
+              })
+            ).then(() => undefined)
+          )
+          .with({ kind: "putResource" }, ({ item }) =>
+            ddb.send(
+              new PutCommand({
+                TableName: config.resourcesProjectionTable,
+                Item: item
+              })
+            ).then(() => undefined)
+          )
+          .with({ kind: "updateResourceDetails" }, ({ resourceId, details, updatedAtUtc }) =>
+            ddb.send(
+              new UpdateCommand({
+                TableName: config.resourcesProjectionTable,
+                Key: { resourceId },
+                UpdateExpression: "SET details = :details, updatedAtUtc = :updatedAt",
+                ExpressionAttributeValues: {
+                  ":details": details,
+                  ":updatedAt": updatedAtUtc
+                }
+              })
+            ).then(() => undefined)
+          )
+          .with({ kind: "putReservation" }, ({ item }) =>
+            ddb.send(
+              new PutCommand({
+                TableName: config.reservationsProjectionTable,
+                Item: item
+              })
+            ).then(() => undefined)
+          )
+          .with({ kind: "cancelReservation" }, ({ reservationId, cancelledAtUtc }) =>
+            ddb.send(
+              new UpdateCommand({
+                TableName: config.reservationsProjectionTable,
+                Key: { reservationId },
+                UpdateExpression: "SET #status = :cancelled, cancelledAtUtc = :cancelledAt",
+                ExpressionAttributeNames: { "#status": "status" },
+                ExpressionAttributeValues: {
+                  ":cancelled": "cancelled",
+                  ":cancelledAt": cancelledAtUtc
+                }
+              })
+            ).then(() => undefined)
+          )
+          .exhaustive()
+      ),
+    Promise.resolve(undefined)
   );
