@@ -17,7 +17,7 @@ import { SendMessageCommand } from "@aws-sdk/client-sqs";
 import { sqs } from "../infra/aws.js";
 import { appendEvent, VersionConflictError } from "../infra/event-store.js";
 
-const foldFromEnvelopes = <TState, TEvent extends { type: string; payload: unknown }>(
+const foldFromRecordedEvents = <TState, TEvent extends { type: string; payload: unknown }>(
   events: Awaited<ReturnType<typeof loadStream<TEvent["type"], TEvent["payload"]>>>,
   initial: TState,
   fold: (state: TState, event: TEvent) => TState
@@ -85,12 +85,14 @@ const withSingleVersionRetry = <T>(action: () => Promise<T>, retry: () => Promis
 export const buildUserState = (
   events: Awaited<ReturnType<typeof loadStream<UserEvent["type"], UserEvent["payload"]>>>
 ) =>
-  foldFromEnvelopes<UserState | null, UserEvent>(events, null, (state, event) => foldUser(state, event));
+  foldFromRecordedEvents<UserState | null, UserEvent>(events, null, (state, event) =>
+    foldUser(state, event)
+  );
 
 export const buildResourceState = (
   events: Awaited<ReturnType<typeof loadStream<ResourceEvent["type"], ResourceEvent["payload"]>>>
 ) =>
-  foldFromEnvelopes<ResourceState | null, ResourceEvent>(events, null, (state, event) =>
+  foldFromRecordedEvents<ResourceState | null, ResourceEvent>(events, null, (state, event) =>
     foldResource(state, event)
   );
 

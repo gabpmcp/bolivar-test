@@ -13,7 +13,7 @@ export const paginationQuerySchema = z.object({
   scope: z.enum(["me", "global"]).optional()
 });
 
-export const userCommandEnvelopeSchema = z.object({
+export const userCommandRequestSchema = z.object({
   command: z.discriminatedUnion("type", [
     z.object({
       type: z.literal("BootstrapAdmin"),
@@ -39,7 +39,7 @@ export const userCommandEnvelopeSchema = z.object({
   ])
 });
 
-export const resourceCommandEnvelopeSchema = z.object({
+export const resourceCommandRequestSchema = z.object({
   command: z.discriminatedUnion("type", [
     z.object({
       type: z.literal("CreateResource"),

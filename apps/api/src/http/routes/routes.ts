@@ -3,8 +3,8 @@ import { config } from "../../config.js";
 import { requireAuth, type AuthedRequest, signToken } from "../security.js";
 import {
   paginationQuerySchema,
-  resourceCommandEnvelopeSchema,
-  userCommandEnvelopeSchema
+  resourceCommandRequestSchema,
+  userCommandRequestSchema
 } from "../schemas.js";
 import { response, runIdempotent, safe, send, validated } from "../../application/pipeline.js";
 import {
@@ -25,7 +25,7 @@ const requireIdempotencyKey = (value: string | undefined) => (value && value.len
 export const registerRoutes = (app: Express) => {
   app.post("/commands/user", (req, res) =>
     safe(
-      validated(userCommandEnvelopeSchema, req.body, "Invalid user command payload").then((parsed) => {
+      validated(userCommandRequestSchema, req.body, "Invalid user command payload").then((parsed) => {
         if ("statusCode" in parsed) {
           return parsed;
         }
@@ -54,7 +54,7 @@ export const registerRoutes = (app: Express) => {
   app.post("/commands/resource", requireAuth, (req, res) => {
     const auth = (req as AuthedRequest).auth;
     return safe(
-      validated(resourceCommandEnvelopeSchema, req.body, "Invalid resource command payload").then((parsed) => {
+      validated(resourceCommandRequestSchema, req.body, "Invalid resource command payload").then((parsed) => {
         if ("statusCode" in parsed) {
           return parsed;
         }
