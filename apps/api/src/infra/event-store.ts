@@ -3,6 +3,7 @@ import {
   ListObjectsV2Command,
   PutObjectCommand
 } from "@aws-sdk/client-s3";
+import type { S3Client } from "@aws-sdk/client-s3";
 import { s3 } from "./aws.js";
 import { config } from "../config.js";
 import type { RecordedEvent, StreamType } from "../domain/types.js";
@@ -60,38 +61,6 @@ export type SnapshotRecord<TState> = {
   createdAtUtc: string;
 };
 
-const listKeysByPrefix = async (prefix: string): Promise<string[]> => {
-  const loop = async (
-    continuationToken?: string,
-    acc: string[] = []
-  ): Promise<string[]> => {
-    const listed = await s3.send(
-      new ListObjectsV2Command({
-        Bucket: config.s3BucketEvents,
-        Prefix: prefix,
-        ContinuationToken: continuationToken
-      })
-    );
-    const keys = (listed.Contents ?? [])
-      .map(({ Key }) => Key)
-      .filter((key): key is string => Boolean(key));
-    return listed.IsTruncated && listed.NextContinuationToken
-      ? loop(listed.NextContinuationToken, [...acc, ...keys])
-      : [...acc, ...keys];
-  };
-  return loop();
-};
-
-const loadJsonObject = async <T>(key: string): Promise<T> => {
-  const object = await s3.send(
-    new GetObjectCommand({
-      Bucket: config.s3BucketEvents,
-      Key: key
-    })
-  );
-  return JSON.parse(await toText(object.Body)) as T;
-};
-
 export const validateSequentialVersions = ({
   versions,
   expectedFromVersion
@@ -111,111 +80,163 @@ export const validateSequentialVersions = ({
     { ok: true as const, expected: expectedFromVersion, actual: null as number | null }
   );
 
-export const loadStreamFromVersion = async <TType extends string, TPayload>(
-  streamType: StreamType,
-  streamId: string,
-  fromVersionInclusive: number
-): Promise<RecordedEvent<TType, TPayload>[]> => {
-  const keys = (await listKeysByPrefix(`${streamType}/${streamId}/`))
-    .map((key) => ({ key, version: parseVersion(key) }))
-    .filter(({ version }) => Number.isFinite(version) && version >= fromVersionInclusive)
-    .sort((a, b) => a.version - b.version)
-    .map(({ key }) => key);
-
-  return Promise.all(
-    keys.map((key) => loadJsonObject<RecordedEvent<TType, TPayload>>(key))
-  );
-};
-
-export const loadStreamWithGapRetry = async <TType extends string, TPayload>(
-  streamType: StreamType,
-  streamId: string,
-  fromVersionInclusive: number
-): Promise<RecordedEvent<TType, TPayload>[]> => {
-  const loadAndValidate = async () => {
-    const events = await loadStreamFromVersion<TType, TPayload>(
-      streamType,
-      streamId,
-      fromVersionInclusive
-    );
-    const validation = validateSequentialVersions({
-      versions: events.map((event) => event.version),
-      expectedFromVersion: fromVersionInclusive
-    });
-    return validation.ok
-      ? events
-      : Promise.reject(
-          new StreamGapDetectedError({
-            streamType,
-            streamId,
-            expectedVersion: validation.expected,
-            actualVersion: validation.actual
-          })
-        );
+export const makeEventStore = ({ s3, bucket }: { s3: S3Client; bucket: string }) => {
+  const listKeysByPrefix = async (prefix: string): Promise<string[]> => {
+    const loop = async (
+      continuationToken?: string,
+      acc: string[] = []
+    ): Promise<string[]> => {
+      const listed = await s3.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken
+        })
+      );
+      const keys = (listed.Contents ?? [])
+        .map(({ Key }) => Key)
+        .filter((key): key is string => Boolean(key));
+      return listed.IsTruncated && listed.NextContinuationToken
+        ? loop(listed.NextContinuationToken, [...acc, ...keys])
+        : [...acc, ...keys];
+    };
+    return loop();
   };
 
-  return loadAndValidate().catch((error) =>
-    error instanceof StreamGapDetectedError ? loadAndValidate() : Promise.reject(error)
-  );
-};
-
-export const loadStream = async <TType extends string, TPayload>(
-  streamType: StreamType,
-  streamId: string
-): Promise<RecordedEvent<TType, TPayload>[]> =>
-  loadStreamWithGapRetry<TType, TPayload>(streamType, streamId, 1);
-
-export const putSnapshot = async <TState>(snapshot: SnapshotRecord<TState>) =>
-  s3
-    .send(
-      new PutObjectCommand({
-        Bucket: config.s3BucketEvents,
-        Key: snapshotKeyOf(snapshot.streamType, snapshot.streamId, snapshot.snapshotVersion),
-        Body: JSON.stringify(snapshot),
-        ContentType: "application/json",
-        Metadata: {
-          snapshotversion: String(snapshot.snapshotVersion),
-          lasteventversion: String(snapshot.lastEventVersion)
-        },
-        IfNoneMatch: "*"
+  const loadJsonObject = async <T>(key: string): Promise<T> => {
+    const object = await s3.send(
+      new GetObjectCommand({
+        Bucket: bucket,
+        Key: key
       })
-    )
-    .then(() => snapshot)
-    .catch((error: { name?: string }) =>
-      error.name === "PreconditionFailed" || error.name === "ConditionalRequestConflict"
-        ? Promise.resolve(snapshot)
-        : Promise.reject(error)
     );
+    return JSON.parse(await toText(object.Body)) as T;
+  };
 
-export const getLatestSnapshot = async <TState>(
-  streamType: StreamType,
-  streamId: string
-): Promise<SnapshotRecord<TState> | null> => {
-  const latest = (await listKeysByPrefix(`snapshots/${streamType}/${streamId}/`))
-    .map((key) => ({ key, version: parseVersion(key) }))
-    .filter(({ version }) => Number.isFinite(version))
-    .sort((a, b) => b.version - a.version)[0];
-  return latest ? loadJsonObject<SnapshotRecord<TState>>(latest.key) : null;
+  const loadStreamFromVersion = async <TType extends string, TPayload>(
+    streamType: StreamType,
+    streamId: string,
+    fromVersionInclusive: number
+  ): Promise<RecordedEvent<TType, TPayload>[]> => {
+    const keys = (await listKeysByPrefix(`${streamType}/${streamId}/`))
+      .map((key) => ({ key, version: parseVersion(key) }))
+      .filter(({ version }) => Number.isFinite(version) && version >= fromVersionInclusive)
+      .sort((a, b) => a.version - b.version)
+      .map(({ key }) => key);
+
+    return Promise.all(keys.map((key) => loadJsonObject<RecordedEvent<TType, TPayload>>(key)));
+  };
+
+  const loadStreamWithGapRetry = async <TType extends string, TPayload>(
+    streamType: StreamType,
+    streamId: string,
+    fromVersionInclusive: number
+  ): Promise<RecordedEvent<TType, TPayload>[]> => {
+    const loadAndValidate = async () => {
+      const events = await loadStreamFromVersion<TType, TPayload>(
+        streamType,
+        streamId,
+        fromVersionInclusive
+      );
+      const validation = validateSequentialVersions({
+        versions: events.map((event) => event.version),
+        expectedFromVersion: fromVersionInclusive
+      });
+      return validation.ok
+        ? events
+        : Promise.reject(
+            new StreamGapDetectedError({
+              streamType,
+              streamId,
+              expectedVersion: validation.expected,
+              actualVersion: validation.actual
+            })
+          );
+    };
+
+    return loadAndValidate().catch((error) =>
+      error instanceof StreamGapDetectedError ? loadAndValidate() : Promise.reject(error)
+    );
+  };
+
+  const loadStream = async <TType extends string, TPayload>(
+    streamType: StreamType,
+    streamId: string
+  ): Promise<RecordedEvent<TType, TPayload>[]> =>
+    loadStreamWithGapRetry<TType, TPayload>(streamType, streamId, 1);
+
+  const putSnapshot = async <TState>(snapshot: SnapshotRecord<TState>) =>
+    s3
+      .send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: snapshotKeyOf(snapshot.streamType, snapshot.streamId, snapshot.snapshotVersion),
+          Body: JSON.stringify(snapshot),
+          ContentType: "application/json",
+          Metadata: {
+            snapshotversion: String(snapshot.snapshotVersion),
+            lasteventversion: String(snapshot.lastEventVersion)
+          },
+          IfNoneMatch: "*"
+        })
+      )
+      .then(() => snapshot)
+      .catch((error: { name?: string }) =>
+        error.name === "PreconditionFailed" || error.name === "ConditionalRequestConflict"
+          ? Promise.resolve(snapshot)
+          : Promise.reject(error)
+      );
+
+  const getLatestSnapshot = async <TState>(
+    streamType: StreamType,
+    streamId: string
+  ): Promise<SnapshotRecord<TState> | null> => {
+    const latest = (await listKeysByPrefix(`snapshots/${streamType}/${streamId}/`))
+      .map((key) => ({ key, version: parseVersion(key) }))
+      .filter(({ version }) => Number.isFinite(version))
+      .sort((a, b) => b.version - a.version)[0];
+    return latest ? loadJsonObject<SnapshotRecord<TState>>(latest.key) : null;
+  };
+
+  const appendEvent = async <TType extends string, TPayload>(
+    recordedEvent: RecordedEvent<TType, TPayload>,
+    expectedVersion: number
+  ) =>
+    expectedVersion + 1 === recordedEvent.version
+      ? s3
+          .send(
+            new PutObjectCommand({
+              Bucket: bucket,
+              Key: keyOf(recordedEvent.streamType, recordedEvent.streamId, recordedEvent.version),
+              Body: JSON.stringify(recordedEvent),
+              ContentType: "application/json",
+              IfNoneMatch: "*"
+            })
+          )
+          .catch((error: { name?: string }) =>
+            error.name === "PreconditionFailed" || error.name === "ConditionalRequestConflict"
+              ? Promise.reject(new VersionConflictError("Version conflict while appending event"))
+              : Promise.reject(error)
+          )
+      : Promise.reject(
+          new VersionConflictError("Expected version does not match recorded event version")
+        );
+
+  return {
+    loadStreamFromVersion,
+    loadStreamWithGapRetry,
+    loadStream,
+    putSnapshot,
+    getLatestSnapshot,
+    appendEvent
+  };
 };
 
-export const appendEvent = async <TType extends string, TPayload>(
-  recordedEvent: RecordedEvent<TType, TPayload>,
-  expectedVersion: number
-) =>
-  expectedVersion + 1 === recordedEvent.version
-    ? s3
-        .send(
-          new PutObjectCommand({
-            Bucket: config.s3BucketEvents,
-            Key: keyOf(recordedEvent.streamType, recordedEvent.streamId, recordedEvent.version),
-            Body: JSON.stringify(recordedEvent),
-            ContentType: "application/json",
-            IfNoneMatch: "*"
-          })
-        )
-        .catch((error: { name?: string }) =>
-          error.name === "PreconditionFailed" || error.name === "ConditionalRequestConflict"
-            ? Promise.reject(new VersionConflictError("Version conflict while appending event"))
-            : Promise.reject(error)
-        )
-    : Promise.reject(new VersionConflictError("Expected version does not match recorded event version"));
+const defaultEventStore = makeEventStore({ s3, bucket: config.s3BucketEvents });
+
+export const loadStreamFromVersion = defaultEventStore.loadStreamFromVersion;
+export const loadStreamWithGapRetry = defaultEventStore.loadStreamWithGapRetry;
+export const loadStream = defaultEventStore.loadStream;
+export const putSnapshot = defaultEventStore.putSnapshot;
+export const getLatestSnapshot = defaultEventStore.getLatestSnapshot;
+export const appendEvent = defaultEventStore.appendEvent;

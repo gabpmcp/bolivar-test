@@ -14,50 +14,71 @@ export type IdempotencyRecord = {
 const hashContent = (content: unknown) =>
   createHash("sha256").update(JSON.stringify(content)).digest("hex");
 
-export const loadIdempotency = (idempotencyKey: string) =>
-  ddb
-    .send(
+type DdbSend = (command: unknown) => Promise<unknown>;
+
+export const makeIdempotencyStore = ({
+  ddbSend,
+  tableName,
+  hashContent
+}: {
+  ddbSend: DdbSend;
+  tableName: string;
+  hashContent: (content: unknown) => string;
+}) => {
+  const loadIdempotency = (idempotencyKey: string) =>
+    ddbSend(
       new GetCommand({
-        TableName: config.idempotencyTable,
+        TableName: tableName,
         Key: { idempotencyKey }
       })
-    )
-    .then((result) => (result.Item as IdempotencyRecord | undefined) ?? null);
+    ).then((result) => ((result as { Item?: unknown }).Item as IdempotencyRecord | undefined) ?? null);
 
-export const saveIdempotency = (record: IdempotencyRecord) =>
-  ddb
-    .send(
+  const saveIdempotency = (record: IdempotencyRecord) =>
+    ddbSend(
       new PutCommand({
-        TableName: config.idempotencyTable,
+        TableName: tableName,
         Item: record,
         ConditionExpression: "attribute_not_exists(idempotencyKey)"
       })
     )
-    .then(() => record)
-    .catch((error: { name?: string }) =>
-      error.name === "ConditionalCheckFailedException"
-        ? Promise.reject(new Error("IDEMPOTENCY_ALREADY_EXISTS"))
-        : Promise.reject(error)
-    );
+      .then(() => record)
+      .catch((error: { name?: string }) =>
+        error.name === "ConditionalCheckFailedException"
+          ? Promise.reject(new Error("IDEMPOTENCY_ALREADY_EXISTS"))
+          : Promise.reject(error)
+      );
 
-export const idempotencyDecision = (
-  existing: IdempotencyRecord | null,
-  idempotencyKey: string,
-  content: unknown
-) => {
-  const contentHash = hashContent(content);
-  return existing === null
-    ? { kind: "new" as const, contentHash }
-    : existing.contentHash === contentHash
-      ? { kind: "replay" as const, record: existing }
-      : {
-          kind: "mismatch" as const,
-          error: {
+  const idempotencyDecision = (
+    existing: IdempotencyRecord | null,
+    idempotencyKey: string,
+    content: unknown
+  ) => {
+    const contentHash = hashContent(content);
+    return existing === null
+      ? { kind: "new" as const, contentHash }
+      : existing.contentHash === contentHash
+        ? { kind: "replay" as const, record: existing }
+        : {
+            kind: "mismatch" as const,
             error: {
-              code: "IDEMPOTENCY_HASH_MISMATCH",
-              reason: "Idempotency-Key was used with a different payload",
-              meta: { idempotencyKey }
+              error: {
+                code: "IDEMPOTENCY_HASH_MISMATCH",
+                reason: "Idempotency-Key was used with a different payload",
+                meta: { idempotencyKey }
+              }
             }
-          }
-        };
+          };
+  };
+
+  return { loadIdempotency, saveIdempotency, idempotencyDecision };
 };
+
+const defaultIdempotencyStore = makeIdempotencyStore({
+  ddbSend: (command) => ddb.send(command as never) as Promise<unknown>,
+  tableName: config.idempotencyTable,
+  hashContent
+});
+
+export const loadIdempotency = defaultIdempotencyStore.loadIdempotency;
+export const saveIdempotency = defaultIdempotencyStore.saveIdempotency;
+export const idempotencyDecision = defaultIdempotencyStore.idempotencyDecision;

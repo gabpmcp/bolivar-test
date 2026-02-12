@@ -14,29 +14,30 @@ const authHeaders = (token: string | null) =>
 
 const asJson = (response: Response) => response.json().catch(() => ({}));
 
-export const request = <T>({
-  path,
-  method = "GET",
-  token,
-  body,
-  idempotent = false
-}: {
-  path: string;
-  method?: "GET" | "POST" | "PATCH";
-  token: string | null;
-  body?: unknown;
-  idempotent?: boolean;
-}) =>
-  fetch(`${apiBase}${path}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(idempotent ? { "Idempotency-Key": uuidv4() } : {}),
-      ...authHeaders(token)
-    },
-    body: body ? JSON.stringify(body) : undefined
-  })
-    .then((response) =>
+export const makeRequest =
+  ({ fetch, uuid, apiBase }: { fetch: typeof globalThis.fetch; uuid: () => string; apiBase: string }) =>
+  <T>({
+    path,
+    method = "GET",
+    token,
+    body,
+    idempotent = false
+  }: {
+    path: string;
+    method?: "GET" | "POST" | "PATCH";
+    token: string | null;
+    body?: unknown;
+    idempotent?: boolean;
+  }) =>
+    fetch(`${apiBase}${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(idempotent ? { "Idempotency-Key": uuid() } : {}),
+        ...authHeaders(token)
+      },
+      body: body ? JSON.stringify(body) : undefined
+    }).then((response) =>
       asJson(response).then((json) =>
         response.ok
           ? (json as T)
@@ -53,3 +54,5 @@ export const request = <T>({
             )
       )
     );
+
+export const request = makeRequest({ fetch, uuid: uuidv4, apiBase });

@@ -1,5 +1,7 @@
 import type { StreamType } from "./domain/types.js";
 
+type Env = Record<string, string | undefined>;
+
 const parseSnapshotByStreamType = (
   value: string | undefined
 ): Partial<Record<StreamType, number>> =>
@@ -13,26 +15,25 @@ const parseSnapshotByStreamType = (
 const parseBool = (value: string | undefined) =>
   value === "1" || value === "true" || value === "TRUE" || value === "yes" || value === "YES";
 
-export const config = {
-  port: Number(process.env.PORT ?? 3000),
-  jwtSecret: process.env.JWT_SECRET ?? "local-dev-secret",
-  adminBootstrapKey: process.env.ADMIN_BOOTSTRAP_KEY ?? "bootstrap-local-key",
-  awsRegion: process.env.AWS_REGION ?? "us-east-1",
-  s3Endpoint: process.env.S3_ENDPOINT,
-  s3BucketEvents: process.env.S3_BUCKET_EVENTS ?? "reservations-events",
-  sqsQueueUrl: process.env.SQS_QUEUE_URL ?? "",
-  dynamoEndpoint: process.env.DYNAMO_ENDPOINT,
-  usersProjectionTable: process.env.USERS_PROJECTION_TABLE ?? "users_projection",
-  resourcesProjectionTable: process.env.RESOURCES_PROJECTION_TABLE ?? "resources_projection",
-  reservationsProjectionTable:
-    process.env.RESERVATIONS_PROJECTION_TABLE ?? "reservations_projection",
-  idempotencyTable: process.env.IDEMPOTENCY_TABLE ?? "idempotency_table",
-  projectionLagTable: process.env.PROJECTION_LAG_TABLE ?? "projection_lag",
-  pageLimitDefault: Number(process.env.PAGE_LIMIT_DEFAULT ?? 20),
-  snapshotEveryDefault: Number(process.env.SNAPSHOT_EVERY_DEFAULT ?? 500),
-  snapshotByStreamType: parseSnapshotByStreamType(process.env.SNAPSHOT_BY_STREAM_TYPE),
-  versionConflictMaxRetries: Number(process.env.VERSION_CONFLICT_MAX_RETRIES ?? 1),
-  emitConcurrencyConflictUnresolvedEvent: parseBool(
-    process.env.EMIT_CONCURRENCY_CONFLICT_UNRESOLVED_EVENT
-  )
-};
+export const makeConfig = (env: Env) => ({
+  port: Number(env.PORT ?? 3000),
+  jwtSecret: env.JWT_SECRET ?? "local-dev-secret",
+  adminBootstrapKey: env.ADMIN_BOOTSTRAP_KEY ?? "bootstrap-local-key",
+  awsRegion: env.AWS_REGION ?? "us-east-1",
+  s3Endpoint: env.S3_ENDPOINT,
+  s3BucketEvents: env.S3_BUCKET_EVENTS ?? "reservations-events",
+  sqsQueueUrl: env.SQS_QUEUE_URL ?? "",
+  dynamoEndpoint: env.DYNAMO_ENDPOINT,
+  usersProjectionTable: env.USERS_PROJECTION_TABLE ?? "users_projection",
+  resourcesProjectionTable: env.RESOURCES_PROJECTION_TABLE ?? "resources_projection",
+  reservationsProjectionTable: env.RESERVATIONS_PROJECTION_TABLE ?? "reservations_projection",
+  idempotencyTable: env.IDEMPOTENCY_TABLE ?? "idempotency_table",
+  projectionLagTable: env.PROJECTION_LAG_TABLE ?? "projection_lag",
+  pageLimitDefault: Number(env.PAGE_LIMIT_DEFAULT ?? 20),
+  snapshotEveryDefault: Number(env.SNAPSHOT_EVERY_DEFAULT ?? 500),
+  snapshotByStreamType: parseSnapshotByStreamType(env.SNAPSHOT_BY_STREAM_TYPE),
+  versionConflictMaxRetries: Number(env.VERSION_CONFLICT_MAX_RETRIES ?? 1),
+  emitConcurrencyConflictUnresolvedEvent: parseBool(env.EMIT_CONCURRENCY_CONFLICT_UNRESOLVED_EVENT)
+});
+
+export const config = makeConfig(process.env);

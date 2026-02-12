@@ -4,31 +4,35 @@ import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import { SQSClient } from "@aws-sdk/client-sqs";
 import { config } from "../config.js";
 
-const endpointConfig = (endpoint: string | undefined) =>
+type Env = Record<string, string | undefined>;
+
+const endpointConfig = (env: Env, endpoint: string | undefined) =>
   endpoint
     ? {
         endpoint,
         forcePathStyle: true,
         credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID ?? "test",
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? "test"
+          accessKeyId: env.AWS_ACCESS_KEY_ID ?? "test",
+          secretAccessKey: env.AWS_SECRET_ACCESS_KEY ?? "test"
         }
       }
     : {};
 
-export const s3 = new S3Client({
-  region: config.awsRegion,
-  ...endpointConfig(config.s3Endpoint)
-});
-
-export const ddb = DynamoDBDocumentClient.from(
-  new DynamoDBClient({
+export const makeAwsClients = ({ config, env }: { config: typeof import("../config.js").config; env: Env }) => ({
+  s3: new S3Client({
     region: config.awsRegion,
-    ...endpointConfig(config.dynamoEndpoint)
+    ...endpointConfig(env, config.s3Endpoint)
+  }),
+  ddb: DynamoDBDocumentClient.from(
+    new DynamoDBClient({
+      region: config.awsRegion,
+      ...endpointConfig(env, config.dynamoEndpoint)
+    })
+  ),
+  sqs: new SQSClient({
+    region: config.awsRegion,
+    ...endpointConfig(env, env.SQS_ENDPOINT)
   })
-);
-
-export const sqs = new SQSClient({
-  region: config.awsRegion,
-  ...endpointConfig(process.env.SQS_ENDPOINT)
 });
+
+export const { s3, ddb, sqs } = makeAwsClients({ config, env: process.env });

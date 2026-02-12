@@ -22,16 +22,25 @@ type Reservation = {
   cancelledAtUtc: string | null;
 };
 
-const decodeClaims = (token: string | null): Claims | null =>
-  token
-    ? (JSON.parse(atob(token.split(".")[1])) as Claims)
-    : null;
+export const makeDecodeClaims =
+  ({ atob, jsonParse }: { atob: (value: string) => string; jsonParse: (value: string) => unknown }) =>
+  (token: string | null): Claims | null =>
+    token ? (jsonParse(atob(token.split(".")[1])) as Claims) : null;
+
+export const makeTokenStore = (storage: Pick<Storage, "getItem" | "setItem" | "removeItem">) => ({
+  get: (key: string) => storage.getItem(key),
+  set: (key: string, value: string) => (storage.setItem(key, value), undefined),
+  remove: (key: string) => (storage.removeItem(key), undefined)
+});
+
+const tokenStore = makeTokenStore(localStorage);
+const decodeClaims = makeDecodeClaims({ atob, jsonParse: JSON.parse });
 
 const useSession = () => {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem("token"));
+  const [token, setToken] = useState<string | null>(() => tokenStore.get("token"));
   const claims = useMemo(() => decodeClaims(token), [token]);
-  const logout = () => (localStorage.removeItem("token"), setToken(null));
-  const login = (nextToken: string) => (localStorage.setItem("token", nextToken), setToken(nextToken));
+  const logout = () => (tokenStore.remove("token"), setToken(null));
+  const login = (nextToken: string) => (tokenStore.set("token", nextToken), setToken(nextToken));
   return { token, claims, login, logout };
 };
 

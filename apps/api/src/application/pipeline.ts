@@ -83,31 +83,59 @@ export const validated = <T>(
     parsed.success ? parsed.data : response(400, badRequest(reason, parsed.error.flatten()))
   );
 
-export const runIdempotent = ({
-  idempotencyKey,
-  content,
-  action
-}: {
-  idempotencyKey: string;
-  content: unknown;
-  action: () => Promise<HttpResponse>;
-}) =>
-  loadIdempotency(idempotencyKey).then((existing) =>
-    match(idempotencyDecision(existing, idempotencyKey, content))
-      .with({ kind: "replay" }, ({ record }) => response(record.statusCode, record.responseBody))
-      .with({ kind: "mismatch" }, ({ error }) => domainErrorResponse(error))
-      .with({ kind: "new" }, ({ contentHash }) =>
-        action().then((result) =>
-          saveIdempotency({
-            idempotencyKey,
-            contentHash,
-            statusCode: result.statusCode,
-            responseBody: result.body,
-            createdAtUtc: nowUtc()
-          })
-            .then(() => result)
-            .catch(() => result)
+export const makeRunIdempotent =
+  (deps: {
+    nowUtc: () => string;
+    loadIdempotency: (idempotencyKey: string) => Promise<unknown>;
+    saveIdempotency: (record: {
+      idempotencyKey: string;
+      contentHash: string;
+      statusCode: number;
+      responseBody: unknown;
+      createdAtUtc: string;
+    }) => Promise<unknown>;
+    idempotencyDecision: (
+      existing: unknown,
+      idempotencyKey: string,
+      content: unknown
+    ) =>
+      | { kind: "new"; contentHash: string }
+      | { kind: "replay"; record: { statusCode: number; responseBody: unknown } }
+      | { kind: "mismatch"; error: DomainError };
+  }) =>
+  ({
+    idempotencyKey,
+    content,
+    action
+  }: {
+    idempotencyKey: string;
+    content: unknown;
+    action: () => Promise<HttpResponse>;
+  }) =>
+    deps.loadIdempotency(idempotencyKey).then((existing) =>
+      match(deps.idempotencyDecision(existing, idempotencyKey, content))
+        .with({ kind: "replay" }, ({ record }) => response(record.statusCode, record.responseBody))
+        .with({ kind: "mismatch" }, ({ error }) => domainErrorResponse(error))
+        .with({ kind: "new" }, ({ contentHash }) =>
+          action().then((result) =>
+            deps
+              .saveIdempotency({
+                idempotencyKey,
+                contentHash,
+                statusCode: result.statusCode,
+                responseBody: result.body,
+                createdAtUtc: deps.nowUtc()
+              })
+              .then(() => result)
+              .catch(() => result)
+          )
         )
-      )
-      .exhaustive()
-  );
+        .exhaustive()
+    );
+
+export const runIdempotent = makeRunIdempotent({
+  nowUtc,
+  loadIdempotency,
+  saveIdempotency,
+  idempotencyDecision
+});
