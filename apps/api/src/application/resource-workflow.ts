@@ -7,6 +7,7 @@ import type {
   UserEvent,
   UserState
 } from "../domain/types.js";
+import { domainError } from "../domain/types.js";
 import { foldUser } from "../domain/user-decider.js";
 import { decideResource, foldResource } from "../domain/resource-decider.js";
 import { getLatestSnapshot, loadStream, loadStreamWithGapRetry, putSnapshot } from "../infra/event-store.js";
@@ -77,10 +78,55 @@ const appendAndPublishRecordedEvent = <TType extends string, TPayload>(
     .then(() => enqueueRecordedEvent(recordedEvent).then(() => undefined))
     .then(() => recordedEvent);
 
-const withSingleVersionRetry = <T>(action: () => Promise<T>, retry: () => Promise<T>) =>
-  action().catch((error) =>
-    error instanceof VersionConflictError ? retry() : Promise.reject(error)
-  );
+const withVersionConflictRetries =
+  (remainingRetries: number) =>
+  <T>(action: () => Promise<T>): Promise<T> =>
+    action().catch((error) =>
+      error instanceof VersionConflictError && remainingRetries > 0
+        ? withVersionConflictRetries(remainingRetries - 1)(action)
+        : Promise.reject(error)
+    );
+
+const maybeEmitConcurrencyConflictUnresolved = ({
+  resourceId,
+  commandName,
+  actorUserId,
+  attempts
+}: {
+  resourceId: string;
+  commandName: string;
+  actorUserId: string;
+  attempts: number;
+}) =>
+  config.emitConcurrencyConflictUnresolvedEvent
+    ? loadStateFromSnapshotAndTail<ResourceState | null, ResourceEvent>({
+        streamType: "resource",
+        streamId: resourceId,
+        initialState: null,
+        fold: (state, event) => foldResource(state, event)
+      })
+        .then(({ lastEventVersion }) =>
+          appendAndPublishRecordedEvent(
+            recordEvent({
+              streamId: resourceId,
+              streamType: "resource",
+              version: lastEventVersion + 1,
+              type: "ConcurrencyConflictUnresolved",
+              payload: {
+                resourceId,
+                commandName,
+                actorUserId,
+                attempts,
+                lastKnownVersion: lastEventVersion
+              },
+              meta: { command: commandName, actorUserId }
+            }),
+            lastEventVersion
+          )
+        )
+        .then(() => undefined)
+        .catch(() => undefined)
+    : Promise.resolve();
 
 export const buildUserState = (
   events: Awaited<ReturnType<typeof loadStream<UserEvent["type"], UserEvent["payload"]>>>
@@ -274,5 +320,29 @@ export const applyResourceCommand = ({
       );
     });
 
-  return withSingleVersionRetry(runResourceAttempt, runResourceAttempt);
+  const retries =
+    Number.isFinite(config.versionConflictMaxRetries) && config.versionConflictMaxRetries >= 0
+      ? config.versionConflictMaxRetries
+      : 1;
+  const attempts = retries + 1;
+
+  return withVersionConflictRetries(retries)(runResourceAttempt).catch((error) =>
+    error instanceof VersionConflictError
+      ? maybeEmitConcurrencyConflictUnresolved({
+          resourceId,
+          commandName,
+          actorUserId,
+          attempts
+        }).then(() =>
+          domainErrorResponse(
+            domainError("VERSION_CONFLICT", "Version conflict while appending event", {
+              resourceId,
+              commandName,
+              actorUserId,
+              attempts
+            })
+          )
+        )
+      : Promise.reject(error)
+  );
 };

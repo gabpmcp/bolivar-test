@@ -10,6 +10,9 @@ const parseSnapshotByStreamType = (
         user: 0
       };
 
+const parseBool = (value: string | undefined) =>
+  value === "1" || value === "true" || value === "TRUE" || value === "yes" || value === "YES";
+
 export const config = {
   port: Number(process.env.PORT ?? 3000),
   jwtSecret: process.env.JWT_SECRET ?? "local-dev-secret",
@@ -27,5 +30,9 @@ export const config = {
   projectionLagTable: process.env.PROJECTION_LAG_TABLE ?? "projection_lag",
   pageLimitDefault: Number(process.env.PAGE_LIMIT_DEFAULT ?? 20),
   snapshotEveryDefault: Number(process.env.SNAPSHOT_EVERY_DEFAULT ?? 500),
-  snapshotByStreamType: parseSnapshotByStreamType(process.env.SNAPSHOT_BY_STREAM_TYPE)
+  snapshotByStreamType: parseSnapshotByStreamType(process.env.SNAPSHOT_BY_STREAM_TYPE),
+  versionConflictMaxRetries: Number(process.env.VERSION_CONFLICT_MAX_RETRIES ?? 1),
+  emitConcurrencyConflictUnresolvedEvent: parseBool(
+    process.env.EMIT_CONCURRENCY_CONFLICT_UNRESOLVED_EVENT
+  )
 };

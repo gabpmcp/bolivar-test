@@ -149,4 +149,14 @@ export type ResourceEvent =
         reservationId: string;
         cancelledAtUtc: string;
       };
+    }
+  | {
+      type: "ConcurrencyConflictUnresolved";
+      payload: {
+        resourceId: string;
+        commandName: string;
+        actorUserId: string;
+        attempts: number;
+        lastKnownVersion: number;
+      };
     };
